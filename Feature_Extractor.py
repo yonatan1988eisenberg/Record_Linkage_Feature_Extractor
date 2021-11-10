@@ -14,6 +14,8 @@ import numpy as np
 import recordlinkage as rl
 from recordlinkage.preprocessing import clean
 import warnings
+import time
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
@@ -22,18 +24,54 @@ config_object = ConfigParser()
 config_object.read("config.ini")
 
 
-def init_compare(args, logger):
+def progressBar(iterable, prefix='', suffix='', decimals=1, length=100, fill='█', printEnd="\r"):
     """
-    This function initiates the comparing algorithm and returns a compare object
+    Call in a loop to create terminal progress bar,
+    taken from https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
+    @params:
+        iterable    - Required  : iterable object (Iterable)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
     """
-    compare = rl.Compare()
+    total = len(iterable)
+    # Progress Bar Printing Function
+    def printProgressBar(iteration):
+        percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+        filledLength = int(length * iteration // total)
+        bar = fill * filledLength + '-' * (length - filledLength)
+        print(f'\r{prefix} |{bar}| {percent}% {suffix}', end=printEnd)
+    # Initial Call
+    printProgressBar(0)
+    # Update Progress Bar
+    for i, item in enumerate(iterable):
+        yield item
+        printProgressBar(i + 1)
+    # Print New Line on Complete
+    print()
 
-    for col in args.compare_cols:
-        for al in args.algos:
+
+def compare_n_compute(df, candidate_pairs, args, logger):
+    """
+    This function initiates the comparing algorithm and calculates the features. it returns the extracted features
+    dataframe.
+    """
+
+    dfs_list = []
+    for al in progressBar(args.algos, prefix='Progress:', suffix='Complete', length=50):
+        logger.info(f'Comuting for algorithm {al}')
+
+        for col in progressBar(args.compare_cols, prefix='Progress:', suffix='Complete', length=50):
+            compare = rl.Compare()
             compare.string(col, col, al, label=f'{col}_{al}')
+            dfs_list.append(compare.compute(candidate_pairs, df))
 
-    logger.info('initiated the compare object')
-    return compare
+        time.sleep(0.1)
+    logger.info('Finished computing')
+    return pd.concat(dfs_list, axis=1)
 
 
 def index_df(df, args, logger):
@@ -117,13 +155,13 @@ def get_data(args, logger):
 
         # load the data
         for supplier in config_object["const"]["source_list"].split(','):
-            filepath = folder_path + '/' + args.city.lower() + '_' + supplier + '.csv'
+            filepath = folder_path + '/' + args.city.lower().replace('_', ' ') + '_' + supplier + '.csv'
             if os.path.exists(filepath):
                 t_df = pd.read_csv(filepath, encoding='UTF-8')
                 t_df['data_source'] = supplier
                 df_list.append(t_df)
     else:
-        logger.debug('The folder doesn\'t exists, terminating program')
+        logger.debug(f'The folder {folder_path} doesn\'t exists, terminating program')
         print('Error, missing folder')
         exit()
 
@@ -212,7 +250,7 @@ def main():
 
     # parse args
     args = parse_args(sys.argv[1:], logger)
-    args.city = ' '.join(args.city)
+    args.city = '_'.join(args.city)
     logger.info(f'args={args}')
 
     # get the data
@@ -227,17 +265,15 @@ def main():
     # get candidate pairs
     candidate_pairs = index_df(df, args, logger)
 
-    # initialize the compare object
-    compare = init_compare(args, logger)
-
-    # compute the features
-    features = compare.compute(candidate_pairs, df)
-        # .rename(columns={'level_0': 'index1', 'level_1': 'index2'}, inplace=True)
+    # initialize the compare object and compute the features
+    print('Computing..')
+    features = compare_n_compute(df, candidate_pairs, args, logger)
 
     # save the df
-    save_path = config_object['const']['data_path_prefix'] + args.city + '/extanded_features.csv'
+    save_path = config_object['const']['data_path_prefix'] + args.city + '/features.csv'
     features.to_csv(save_path)
     logger.info('FINISHED RUNNING')
+    print(f'Done, the results can be found at {save_path}')
 
 
 if __name__ == '__main__':
