@@ -62,17 +62,16 @@ def compare_n_compute(df, candidate_pairs, args, logger):
     """
     dfs_list = []
 
-    for dict_item in progress_bar(args.compare_by, prefix='Progress:', suffix='Complete', length=50):
-        for col, algo_list in dict_item.items():
-            logger.info(f'Computing for column {col}')
+    for col, algo_list in args.compare_by.items():
+        logger.info(f'Computing for column {col}')
+        print(f'Computing for column "{col}"..')
+        for al in progress_bar(algo_list, prefix='Progress:', suffix='Complete', length=50):
+            compare = rl.Compare()
+            compare.string(col, col, al, label=f'{col}_{al}')
+            dfs_list.append(compare.compute(candidate_pairs, df))
 
-            for al in algo_list:
-                compare = rl.Compare()
-                compare.string(col, col, al, label=f'{col}_{al}')
-                dfs_list.append(compare.compute(candidate_pairs, df))
-
-            time.sleep(0.1)
-
+        time.sleep(0.1)
+        print(f'Done')
     logger.info('Finished computing')
     return pd.concat(dfs_list, axis=1)
 
@@ -84,13 +83,12 @@ def index_df(df, args, logger):
 
     indexer = rl.Index()
 
-    for dict_item in args.index_by:
-        for method, col_list in dict_item.items():
-            if method in ['Block', 'SortedNeighbourhood']:
-                for col in col_list:
-                    eval(f'indexer.add(rl.index.{method}({col}))')
-            else:
-                eval(f'indexer.add(rl.index.{method}())')
+    for method, col_list in args.index_by.items():
+        if method in ['Block', 'SortedNeighbourhood']:
+            for col in col_list:
+                eval(f'indexer.add(rl.index.{method}({col}))')
+        else:
+            eval(f'indexer.add(rl.index.{method}())')
 
     candidate_pairs = indexer.index(df)
 
@@ -109,9 +107,8 @@ def preprocess_raw_df(raw_df, args, logger):
     prcs_df['about'] = prcs_df.about.apply(lambda x: np.nan if x == 'unavailable' else x)
 
     # lower case the columns we'll compare on
-    for dict_item in args.compare_by:
-        for col, algo_list in dict_item.items():
-            prcs_df[col] = clean(prcs_df[col])
+    for col, algo_list in args.compare_by.items():
+        prcs_df[col] = clean(prcs_df[col])
 
     # remove duplicates if requested
     if args.remove_duplicates:
@@ -140,27 +137,23 @@ def val_data(raw_df, args, logger):
                          'match the dataset')
             exit()
 
-    # validate index_by
-    for item_dict in args.index_by:
-        for method, col_list in item_dict.items():
-            if method in ['Block', 'SortedNeighbourhood']:
-                for col in col_list:
-                    if col not in raw_df.columns:
-                        logger.debug('The column(s) used as input in the parameter \'index_by\' doesn\'t '
-                                     'match the dataset')
-                        exit()
-
-    # validate compare_by
-    for item_dict in args.compare_by:
-        for col, algo_list in item_dict.items():
-            if col not in raw_df.columns:
-                logger.debug('The column(s) used as input in the parameter \'compare_by\' doesn\'t match the dataset')
-                exit()
-
-            for algo in algo_list:
-                if algo not in config_object['const']['supported_algorithms'].split():
-                    logger.debug('An algorithm used as input isn\'t supported')
+    for method, col_list in args.index_by.items():
+        if method in ['Block', 'SortedNeighbourhood']:
+            for col in col_list:
+                if col not in raw_df.columns:
+                    logger.debug('The column(s) used as input in the parameter \'index_by\' doesn\'t '
+                                 'match the dataset')
                     exit()
+
+    for col, algo_list in args.compare_by.items():
+        if col not in raw_df.columns:
+            logger.debug('The column(s) used as input in the parameter \'compare_by\' doesn\'t match the dataset')
+            exit()
+
+        for algo in algo_list:
+            if algo not in config_object['const']['supported_algorithms'].split():
+                logger.debug('An algorithm used as input isn\'t supported')
+                exit()
 
     logger.info('Validated input columns match the dataset')
 
@@ -270,8 +263,11 @@ def main():
     # parse args
     args = parse_args(sys.argv[1:], logger)
     args.city = '_'.join(args.city)
-    if isinstance(args.index_by, dict):
-        args.index_by = [args.index_by]
+    if isinstance(args.index_by, list):
+        args.index_by = {k: v for d in args.index_by for k, v in d.items()}
+    if isinstance(args.compare_by, list):
+        args.compare_by = {k: v for d in args.compare_by for k, v in d.items()}
+
     logger.info(f'args={args}')
 
     # get the data
@@ -290,7 +286,7 @@ def main():
     candidate_pairs = index_df(df, args, logger)
 
     # initialize the compare object and compute the features
-    print('Computing..')
+    print('Started computing..')
     features = compare_n_compute(df, candidate_pairs, args, logger)
 
     # save the df
